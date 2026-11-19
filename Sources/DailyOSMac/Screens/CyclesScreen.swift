@@ -557,6 +557,14 @@ private struct CycleSectionPanel: View {
 
   @State private var isEditing = false
   @State private var showsDraftComparison = false
+  /// What the text box currently shows, held locally so autosave cannot move it.
+  ///
+  /// The editor used to read `draft ?? editableBody` straight from the observed
+  /// model. Autosave clears `draft` ~1.2s after a pause, which re-rendered the
+  /// NSTextView and threw the insertion point to the end — you could not keep
+  /// typing after a pause. Binding to local state and writing through on change
+  /// keeps the cursor still while persistence and dirty-tracking stay the same.
+  @State private var editorText = ""
   /// Debounced autosave, so switching pages (or just pausing) never loses what
   /// was typed — the draft already persists, this commits it to the file.
   @State private var saveTask: Task<Void, Never>?
@@ -608,15 +616,7 @@ private struct CycleSectionPanel: View {
             LabeledBody(label: "自动规划的新草稿", text: pending, tone: .warn)
           }
         } else if isEditing {
-          TextEditor(text: Binding(
-            get: { draft ?? editableBody },
-            // Back to what is saved: nothing left to keep. Each edit also arms
-            // the autosave so a page switch a moment later cannot lose it.
-            set: {
-              draft = $0 == editableBody ? nil : $0
-              scheduleAutosave()
-            }
-          ))
+          TextEditor(text: $editorText)
           .font(Typo.body)
           .lineSpacing(4)
           .scrollContentBackground(.hidden)
@@ -624,6 +624,13 @@ private struct CycleSectionPanel: View {
           .frame(minHeight: 220)
           .background(Palette.surfaceSunken)
           .clipShape(RoundedRectangle(cornerRadius: Metrics.radiusSmall, style: .continuous))
+          // Each edit records the draft (so a page switch a moment later cannot
+          // lose it) and arms the autosave. The draft is nil when the text is
+          // back to what is saved: nothing left to keep.
+          .onChange(of: editorText) { _, text in
+            draft = text == editableBody ? nil : text
+            scheduleAutosave()
+          }
         } else if section.kind == .priorities {
           PrioritiesView(cycle: cycle, section: section, editable: editable)
         } else {
@@ -645,7 +652,15 @@ private struct CycleSectionPanel: View {
         }
       }
       // A draft left from before (a restart, another window) opens where it was.
-      .onAppear { if isDirty { isEditing = true } }
+      .onAppear {
+        editorText = draft ?? editableBody
+        if isDirty { isEditing = true }
+      }
+      // Entering the editor seeds it from the current draft or saved text; while
+      // editing, autosave never writes back here, so the cursor stays put.
+      .onChange(of: isEditing) { _, editing in
+        if editing { editorText = draft ?? editableBody }
+      }
       // Leaving the page commits whatever is unsaved right now, so nothing is
       // lost between the last keystroke and the debounce.
       .onDisappear { flushAutosave() }
@@ -674,7 +689,7 @@ private struct CycleSectionPanel: View {
 
         if isEditing {
           if isDirty {
-            Button("放弃修改") { draft = nil }
+            Button("放弃修改") { draft = nil; editorText = editableBody }
               .buttonStyle(QuietButtonStyle(tone: .neutral))
               .help("回到保存过的版本")
           }

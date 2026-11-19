@@ -1788,6 +1788,16 @@ private struct CloseCyclePanel: View {
   private var marked: Bool { doc != nil && unmarked.isEmpty }
   private var retroWritten: Bool { RetroText.isWritten(cycle.section(.retro)?.body) }
   private var hasReview: Bool { !(cycle.section(.review)?.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+  /// The cycle 生成下一期要务 drafts into: the soonest one that starts after this,
+  /// among my own cycles. A run that finished in another session or on another
+  /// day leaves no toast, so the step's done-state has to be read from the data.
+  private var nextCycle: Cycle? {
+    state.cycles
+      .filter { $0.ownerId == cycle.ownerId && $0.start > cycle.start }
+      .min(by: { $0.start < $1.start })
+  }
+  /// Step ④ is done once that next cycle exists with 要务 in it.
+  private var nextPlanned: Bool { nextCycle?.prioritiesGenerated ?? false }
 
   var body: some View {
     Panel("收尾本期") {
@@ -1804,10 +1814,12 @@ private struct CloseCyclePanel: View {
             .disabled(reviewing || !marked || !retroWritten)
             .help(!marked ? "先标完要务的完成度" : (!retroWritten ? "先写复盘" : ""))
         }
-        step(4, "生成下一期要务", done: false, detail: "读这一期的总结，起草下一期的要务，几分钟。下一期的要务你改过的话，新的放成草稿让你对比。") {
+        step(4, "生成下一期要务", done: nextPlanned, detail: nextPlanned
+             ? "下一期要务已起草（\(nextCycle?.label ?? "下一期")），在「我的周期」里。改了可以重新生成。"
+             : "读这一期的总结，起草下一期的要务，几分钟。下一期的要务你改过的话，新的放成草稿让你对比。") {
           HStack(spacing: Metrics.sm) {
-            Button(running ? "起草中…" : "生成下一期要务", action: planNext)
-              .buttonStyle(MossButtonStyle(prominent: hasReview))
+            Button(running ? "起草中…" : (nextPlanned ? "重新生成下一期要务" : "生成下一期要务"), action: planNext)
+              .buttonStyle(MossButtonStyle(prominent: hasReview && !nextPlanned))
               .disabled(running || !hasReview)
               .help(hasReview ? "" : "先生成总结")
             if running {
